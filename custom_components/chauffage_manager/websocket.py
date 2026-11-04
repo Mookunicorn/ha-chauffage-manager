@@ -25,6 +25,7 @@ SCHEMAS = {
             vol.Required("entity"): str,
             vol.Optional("climate"): vol.Any(None, str),
             vol.Optional("schedule_id"): vol.Any(None, str),
+            vol.Optional("floor"): vol.Any(None, str),
             vol.Optional("absence_temperature"): vol.Coerce(float),
         }
     ),
@@ -33,6 +34,7 @@ SCHEMAS = {
             vol.Required("name"): str,
             vol.Required("members"): [str],
             vol.Optional("schedule_id"): vol.Any(None, str),
+            vol.Optional("floor"): vol.Any(None, str),
         }
     ),
     "schedule": vol.Schema({vol.Required("name"): str, vol.Required("slots"): [_SLOT]}),
