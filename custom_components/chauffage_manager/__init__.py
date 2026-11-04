@@ -1,19 +1,15 @@
 """Chauffage Manager : gestion de chauffages (fil pilote / thermostat), plannings, groupes, absence."""
 from __future__ import annotations
 
-from pathlib import Path
-
 import voluptuous as vol
 
 from homeassistant.components import websocket_api
-from homeassistant.components.frontend import add_extra_js_url
-from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
 
-from .const import CARD_URL, CONTROL_AUTO, CONTROL_MANUAL, DOMAIN, MODES, VERSION
+from .const import CONTROL_AUTO, CONTROL_MANUAL, DOMAIN, MODES
 from .manager import ChauffageManager
 from .websocket import ws_delete, ws_get, ws_save
 
@@ -35,9 +31,6 @@ SET_MANUAL = vol.Schema(
 async def async_setup(hass: HomeAssistant, config) -> bool:
     for command in (ws_get, ws_save, ws_delete):
         websocket_api.async_register_command(hass, command)
-    path = Path(__file__).parent / "www" / "chauffage-manager-card.js"
-    await hass.http.async_register_static_paths([StaticPathConfig(CARD_URL, str(path), False)])
-    add_extra_js_url(hass, f"{CARD_URL}?v={VERSION}")
     return True
 
 

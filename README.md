@@ -1,12 +1,19 @@
 # Chauffage Manager
 
-Intégration Home Assistant : chauffages fil pilote (select ZHA) et thermostats (climate), plannings intégrés, groupes, mode absence multi-personnes, carte Lovelace.
+Intégration Home Assistant : chauffages fil pilote (select ZHA) et thermostats (climate), plannings intégrés, groupes, mode absence multi-personnes.
+
+L'interface est fournie par la carte [Chauffage Manager Card](https://github.com/Mookunicorn/chauffage-manager-card) (dépôt séparé).
+
+[![Ouvrir l'intégration dans HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Mookunicorn&repository=ha-chauffage-manager&category=integration)
+[![Ouvrir la carte dans HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Mookunicorn&repository=chauffage-manager-card&category=plugin)
 
 ## Installation via HACS
-1. HACS → menu ⋮ → **Dépôts personnalisés** → URL `https://github.com/Mookunicorn/ha-chauffage-manager`, catégorie **Intégration**.
-2. Télécharger **Chauffage Manager**, puis redémarrer Home Assistant.
+1. HACS → menu ⋮ → **Dépôts personnalisés** :
+   - `https://github.com/Mookunicorn/ha-chauffage-manager` → catégorie **Intégration**
+   - `https://github.com/Mookunicorn/chauffage-manager-card` → catégorie **Tableau de bord**
+2. Télécharger les deux, redémarrer Home Assistant, puis recharger la page sans cache.
 3. Paramètres → Appareils et services → Ajouter → **Chauffage Manager** (choisir les personnes).
-4. Ajouter la carte (la ressource JS est enregistrée automatiquement) :
+4. Ajouter la carte :
 ```yaml
 type: custom:chauffage-manager-card
 title: Chauffage          # optionnel

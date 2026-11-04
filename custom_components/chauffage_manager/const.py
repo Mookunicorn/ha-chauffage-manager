@@ -1,10 +1,8 @@
 """Constantes Chauffage Manager."""
 DOMAIN = "chauffage_manager"
-VERSION = "1.0.0"
 SIGNAL_UPDATE = f"{DOMAIN}_update"
 EVENT_UPDATED = f"{DOMAIN}_updated"
 STORAGE_VERSION = 1
-CARD_URL = f"/{DOMAIN}/chauffage-manager-card.js"
 
 MODES = ["off", "frost_protection", "eco", "comfort_minus_2", "comfort_minus_1", "comfort"]
 PILOT_OPTIONS = {
