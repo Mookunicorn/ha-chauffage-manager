@@ -68,7 +68,7 @@ def ws_get(hass, connection, msg):
     {
         vol.Required("type"): "chauffage_manager/save",
         vol.Required("kind"): vol.In(list(SCHEMAS)),
-        vol.Optional("id"): str,
+        vol.Optional("item_id"): str,
         vol.Required("value"): dict,
     }
 )
@@ -81,7 +81,7 @@ async def ws_save(hass, connection, msg):
     except vol.Invalid as err:
         connection.send_error(msg["id"], "invalid", str(err))
         return
-    item_id = await mgr.async_upsert(msg["kind"], msg.get("id"), value)
+    item_id = await mgr.async_upsert(msg["kind"], msg.get("item_id"), value)
     connection.send_result(msg["id"], {"id": item_id})
 
 
@@ -89,11 +89,11 @@ async def ws_save(hass, connection, msg):
     {
         vol.Required("type"): "chauffage_manager/delete",
         vol.Required("kind"): vol.In(["heater", "group", "schedule"]),
-        vol.Required("id"): str,
+        vol.Required("item_id"): str,
     }
 )
 @websocket_api.require_admin
 @websocket_api.async_response
 async def ws_delete(hass, connection, msg):
-    await _mgr(hass).async_delete(msg["kind"], msg["id"])
+    await _mgr(hass).async_delete(msg["kind"], msg["item_id"])
     connection.send_result(msg["id"], {})
