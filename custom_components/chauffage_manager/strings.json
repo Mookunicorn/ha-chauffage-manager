@@ -1,0 +1,36 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Chauffage Manager",
+        "description": "Personnes dont la présence détermine le mode absence (modifiable ensuite dans la carte).",
+        "data": {
+          "persons": "Personnes"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Une seule instance est possible."
+    }
+  },
+  "entity": {
+    "select": {
+      "control": {
+        "state": {
+          "auto": "Automatique",
+          "manual": "Manuel"
+        }
+      },
+      "absence_mode": {
+        "state": {
+          "off": "Off",
+          "frost_protection": "Hors-gel",
+          "eco": "Éco",
+          "comfort_minus_2": "Confort -2",
+          "comfort_minus_1": "Confort -1",
+          "comfort": "Confort"
+        }
+      }
+    }
+  }
+}

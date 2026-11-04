@@ -1,0 +1,36 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Chauffage Manager",
+        "description": "People whose presence defines absence mode (editable later in the card).",
+        "data": {
+          "persons": "People"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Only one instance is allowed."
+    }
+  },
+  "entity": {
+    "select": {
+      "control": {
+        "state": {
+          "auto": "Automatic",
+          "manual": "Manual"
+        }
+      },
+      "absence_mode": {
+        "state": {
+          "off": "Off",
+          "frost_protection": "Frost protection",
+          "eco": "Eco",
+          "comfort_minus_2": "Comfort -2",
+          "comfort_minus_1": "Comfort -1",
+          "comfort": "Comfort"
+        }
+      }
+    }
+  }
+}
