@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from functools import partial
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -11,6 +12,7 @@ from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import (
+    async_call_later,
     async_track_state_change_event,
     async_track_time_change,
 )
@@ -23,6 +25,7 @@ from .const import (
     CONTROL_MANUAL,
     DEFAULT_ABSENCE,
     DEFAULT_ABSENCE_TEMPERATURE,
+    DEFAULT_OPENINGS,
     DEFAULT_TEMPERATURE,
     DOMAIN,
     EVENT_UPDATED,
@@ -47,6 +50,9 @@ class ChauffageManager:
         self._applied: dict[str, tuple] = {}
         self._unsubs: list = []
         self._presence_unsub = None
+        self._open_unsub = None
+        self._timers: dict[tuple, Any] = {}
+        self._overridden: set[str] = set()
         self._lock = asyncio.Lock()
 
     # ------------------------------------------------------------ cycle de vie
@@ -61,6 +67,8 @@ class ChauffageManager:
             "schedules": stored.get("schedules", {}),
             "control": stored.get("control", {}),
             "absence": absence,
+            "openings": {**DEFAULT_OPENINGS, **stored.get("openings", {})},
+            "pauses": stored.get("pauses", {}),
             "absent": stored.get("absent", False),
             "snapshot": stored.get("snapshot"),
         }
@@ -70,6 +78,7 @@ class ChauffageManager:
         self._unsubs.append(async_track_time_change(self.hass, self._tick, second=0))
         self._unsubs.append(async_at_started(self.hass, self._started))
         self._track_persons()
+        self._track_openings()
 
     @callback
     def _started(self, _hass=None) -> None:
@@ -77,6 +86,7 @@ class ChauffageManager:
 
     async def _startup(self) -> None:
         await self._evaluate_presence()
+        self._evaluate_openings()
         await self._tick()
 
     @callback
@@ -84,6 +94,11 @@ class ChauffageManager:
         for unsub in self._unsubs:
             unsub()
         self._unsubs.clear()
+        for key in list(self._timers):
+            self._cancel_timer(key)
+        if self._open_unsub:
+            self._open_unsub()
+            self._open_unsub = None
         if self._presence_unsub:
             self._presence_unsub()
             self._presence_unsub = None
@@ -136,10 +151,12 @@ class ChauffageManager:
                     "control": self.control_of(t),
                     "schedule_id": self.schedule_of(t),
                     "members": self.members(t),
+                    "paused": t in d["pauses"],
                 }
                 for t in self.target_ids()
             ],
             "absence": {**d["absence"], "active": d["absent"]},
+            "openings": d["openings"],
         }
 
     # ------------------------------------------------------- lecture / écriture
@@ -198,7 +215,7 @@ class ChauffageManager:
         now = dt_util.now()
         minute = now.hour * 60 + now.minute
         for target in self.target_ids():
-            if self.control_of(target) != CONTROL_AUTO:
+            if self.control_of(target) != CONTROL_AUTO or target in self.data["pauses"]:
                 continue
             sched_id = self.schedule_of(target)
             sched = self.data["schedules"].get(sched_id)
@@ -231,6 +248,8 @@ class ChauffageManager:
         target = self.resolve_target(target)
         self.data["control"][target] = CONTROL_MANUAL
         self._applied.pop(target, None)
+        if self.data["pauses"].pop(target, None) is not None:
+            self._overridden.add(target)
         for heater_id in self.members(target):
             await self._apply_heater(heater_id, mode, temperature)
         await self._save_notify()
@@ -248,6 +267,11 @@ class ChauffageManager:
         if kind == "absence":
             await self.async_update_absence(**value)
             return None
+        if kind == "openings":
+            self.data["openings"] = {**DEFAULT_OPENINGS, **value}
+            await self._save_notify()
+            self._evaluate_openings()
+            return None
         collection = self.data[_COLLECTIONS[kind]]
         item_id = item_id or f"{kind[0]}_{uuid.uuid4().hex[:6]}"
         if kind == "group":
@@ -260,7 +284,9 @@ class ChauffageManager:
             self.data["control"].setdefault(item_id, CONTROL_MANUAL)
         collection[item_id] = value
         self._applied.clear()
+        self._track_openings()
         await self._save_notify()
+        self._evaluate_openings()
         await self._tick()
         return item_id
 
@@ -275,8 +301,11 @@ class ChauffageManager:
                     if item.get("schedule_id") == item_id:
                         item["schedule_id"] = None
         self.data["control"].pop(item_id, None)
+        self.data["pauses"].pop(item_id, None)
         self._applied.clear()
+        self._track_openings()
         await self._save_notify()
+        self._evaluate_openings()
 
     async def _save_notify(self) -> None:
         await self._store.async_save(self.data)
@@ -321,8 +350,9 @@ class ChauffageManager:
         snapshot: dict[str, Any] = {"control": {}, "values": {}}
         for target in self.target_ids():
             snapshot["control"][target] = self.control_of(target)
+            paused = self.data["pauses"].get(target, {}).get("values", {})
             for hid in self.members(target):
-                value = self.read_heater(self.data["heaters"][hid])
+                value = paused.get(hid) or self.read_heater(self.data["heaters"][hid])
                 if value and value["mode"]:
                     snapshot["values"][hid] = value
         self.data["snapshot"] = snapshot
@@ -330,7 +360,7 @@ class ChauffageManager:
         for target in self.target_ids():
             self.data["control"][target] = cfg["control"]
             self._applied.pop(target, None)
-            if cfg["control"] == CONTROL_MANUAL:
+            if cfg["control"] == CONTROL_MANUAL and target not in self.data["pauses"]:
                 for hid in self.members(target):
                     await self._apply_heater(hid, cfg["mode"], self._absence_temp(hid))
         await self._save_notify()
@@ -351,7 +381,120 @@ class ChauffageManager:
                 if control == CONTROL_MANUAL:
                     for hid in self.members(target):
                         value = snapshot["values"].get(hid)
-                        if value:
+                        if not value:
+                            continue
+                        if target in self.data["pauses"]:
+                            self.data["pauses"][target]["values"][hid] = value
+                        else:
                             await self._apply_heater(hid, value["mode"], value["temperature"])
+        await self._save_notify()
+        await self._tick()
+
+    # --------------------------------------------------------------- ouvertures
+    def _openings_of(self, target: str) -> list[str]:
+        return list(self._item(target).get("openings") or [])
+
+    def _track_openings(self) -> None:
+        if self._open_unsub:
+            self._open_unsub()
+            self._open_unsub = None
+        entities = sorted({e for t in self.target_ids() for e in self._openings_of(t)})
+        if entities:
+            self._open_unsub = async_track_state_change_event(
+                self.hass, entities, self._opening_changed
+            )
+
+    @callback
+    def _opening_changed(self, event: Event) -> None:
+        entity = event.data["entity_id"]
+        for target in self.target_ids():
+            if entity in self._openings_of(target):
+                self._evaluate_opening(target)
+
+    def _is_open(self, target: str) -> bool:
+        for entity in self._openings_of(target):
+            state = self.hass.states.get(entity)
+            if state is not None and state.state == "on":
+                return True
+        return False
+
+    def _cancel_timer(self, key: tuple) -> None:
+        unsub = self._timers.pop(key, None)
+        if unsub:
+            unsub()
+
+    @callback
+    def _evaluate_openings(self) -> None:
+        for target in list(self.data["pauses"]):
+            if target not in self.target_ids():
+                self.data["pauses"].pop(target)
+        for target in self.target_ids():
+            self._evaluate_opening(target)
+
+    @callback
+    def _evaluate_opening(self, target: str) -> None:
+        cfg = self.data["openings"]
+        paused = target in self.data["pauses"]
+        if self._is_open(target):
+            self._cancel_timer((target, "resume"))
+            if paused or target in self._overridden or (target, "pause") in self._timers:
+                return
+            delay = float(cfg["delay"]) * 60
+            if delay <= 0:
+                self.hass.async_create_task(self._pause(target))
+            else:
+                self._timers[(target, "pause")] = async_call_later(
+                    self.hass, delay, partial(self._timer_fired, target, "pause")
+                )
+        else:
+            self._cancel_timer((target, "pause"))
+            self._overridden.discard(target)
+            if not paused or (target, "resume") in self._timers:
+                return
+            delay = float(cfg["resume_delay"]) * 60
+            if delay <= 0:
+                self.hass.async_create_task(self._resume(target))
+            else:
+                self._timers[(target, "resume")] = async_call_later(
+                    self.hass, delay, partial(self._timer_fired, target, "resume")
+                )
+
+    @callback
+    def _timer_fired(self, target: str, kind: str, _now=None) -> None:
+        self._timers.pop((target, kind), None)
+        is_open = self._is_open(target)
+        if kind == "pause" and is_open:
+            self.hass.async_create_task(self._pause(target))
+        elif kind == "resume" and not is_open:
+            self.hass.async_create_task(self._resume(target))
+
+    async def _pause(self, target: str) -> None:
+        if target in self.data["pauses"] or target not in self.target_ids():
+            return
+        snapshot: dict[str, Any] = {"values": {}}
+        for hid in self.members(target):
+            value = self.read_heater(self.data["heaters"][hid])
+            if value and value["mode"]:
+                snapshot["values"][hid] = value
+        self.data["pauses"][target] = snapshot
+        mode = self.data["openings"]["mode"]
+        for hid in self.members(target):
+            await self._apply_heater(hid, mode, self._absence_temp(hid))
+        await self._save_notify()
+
+    async def _resume(self, target: str) -> None:
+        snapshot = self.data["pauses"].pop(target, None)
+        if snapshot is None:
+            return
+        if self.control_of(target) == CONTROL_MANUAL:
+            absence = self.data["absence"]
+            for hid in self.members(target):
+                if self.data["absent"]:
+                    await self._apply_heater(hid, absence["mode"], self._absence_temp(hid))
+                elif hid in snapshot["values"]:
+                    value = snapshot["values"][hid]
+                    await self._apply_heater(hid, value["mode"], value["temperature"])
+        else:
+            self._applied.pop(target, None)
         await self._save_notify()
         await self._tick()

@@ -22,6 +22,7 @@ CONTROL_MANUAL = "manual"
 
 DEFAULT_TEMPERATURE = 19.0
 DEFAULT_ABSENCE_TEMPERATURE = 12.0
+DEFAULT_OPENINGS = {"delay": 2, "resume_delay": 0, "mode": "frost_protection"}
 DEFAULT_ABSENCE = {
     "persons": [],
     "mode": "frost_protection",
