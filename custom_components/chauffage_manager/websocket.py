@@ -27,6 +27,8 @@ SCHEMAS = {
             vol.Optional("schedule_id"): vol.Any(None, str),
             vol.Optional("floor"): vol.Any(None, str),
             vol.Optional("openings"): [str],
+            vol.Optional("power_entity"): vol.Any(None, str),
+            vol.Optional("power_threshold"): vol.Coerce(float),
             vol.Optional("absence_temperature"): vol.Coerce(float),
         }
     ),
