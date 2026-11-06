@@ -5,7 +5,6 @@ Intégration Home Assistant : chauffages fil pilote (select ZHA) et thermostats 
 L'interface est fournie par la carte [Chauffage Manager Card](https://github.com/Mookunicorn/chauffage-manager-card) (dépôt séparé).
 
 [![Ouvrir l'intégration dans HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Mookunicorn&repository=ha-chauffage-manager&category=integration)
-[![Ouvrir la carte dans HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Mookunicorn&repository=chauffage-manager-card&category=plugin)
 
 ## Installation via HACS
 1. HACS → menu ⋮ → **Dépôts personnalisés** :
@@ -31,6 +30,3 @@ tabs: [rooms, schedules, absence, config]   # optionnel, ex. [rooms] pour une ca
   Au retour d'au moins une personne, l'état est restauré si l'option est activée. Thermostats : température d'absence réglée par chauffage.
 - Entités : `select.chauffage_<nom>_programmation` (auto/manuel), `select.chauffage_mode_absence`, `select.chauffage_programmation_en_absence`, `switch.chauffage_restauration_au_retour`, `binary_sensor.chauffage_absence`.
 - Services : `chauffage_manager.set_control` (target, control), `chauffage_manager.set_manual` (target, mode, temperature). `target` = nom ou id.
-
-## Migration depuis une config à base d'input_select / scheduler-card
-Supprimer ensuite : les `input_select` de mode et de programmation par chauffage, les `input_text` de valeurs d'absence, les réglages d'absence et de reprise, les automatisations présence/absence/sauvegarde, et les schedules scheduler-card correspondants.
