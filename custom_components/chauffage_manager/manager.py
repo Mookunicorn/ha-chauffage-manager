@@ -255,13 +255,29 @@ class ChauffageManager:
         await self._save_notify()
 
     async def async_update_absence(self, **kwargs) -> None:
-        old = list(self.data["absence"]["persons"])
+        old = dict(self.data["absence"])
         self.data["absence"].update(kwargs)
-        if old != self.data["absence"]["persons"]:
+        new = self.data["absence"]
+        if old["persons"] != new["persons"]:
             self._track_persons()
         await self._save_notify()
-        if old != self.data["absence"]["persons"]:
+        if self.data["absent"] and (old["mode"] != new["mode"] or old["control"] != new["control"]):
+            await self._reapply_absence()
+        if old["persons"] != new["persons"]:
             await self._evaluate_presence()
+
+    async def _reapply_absence(self) -> None:
+        """Absence en cours : applique tout de suite les nouveaux réglages (sans refaire de sauvegarde)."""
+        cfg = self.data["absence"]
+        for target in self.target_ids():
+            self.data["control"][target] = cfg["control"]
+            self._applied.pop(target, None)
+            if cfg["control"] == CONTROL_MANUAL and target not in self.data["pauses"]:
+                for hid in self.members(target):
+                    await self._apply_heater(hid, cfg["mode"], self._absence_temp(hid))
+        await self._save_notify()
+        if cfg["control"] == CONTROL_AUTO:
+            await self._tick()
 
     async def async_upsert(self, kind: str, item_id: str | None, value: dict) -> str | None:
         if kind == "absence":
