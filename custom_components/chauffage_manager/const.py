@@ -21,7 +21,13 @@ CONTROL_AUTO = "auto"
 CONTROL_MANUAL = "manual"
 
 DEFAULT_TEMPERATURE = 19.0
-DEFAULT_ABSENCE_TEMPERATURE = 12.0
+DEFAULT_TEMPERATURES = {
+    "comfort": 19.0,
+    "comfort_minus_1": 18.0,
+    "comfort_minus_2": 17.0,
+    "eco": 15.5,
+    "frost_protection": 7.0,
+}
 DEFAULT_OPENINGS = {"delay": 2, "resume_delay": 0, "mode": "frost_protection"}
 DEFAULT_ABSENCE = {
     "persons": [],

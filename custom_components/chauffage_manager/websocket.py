@@ -43,6 +43,18 @@ SCHEMAS = {
         }
     ),
     "schedule": vol.Schema({vol.Required("name"): str, vol.Required("slots"): [_SLOT]}),
+    "temperatures": vol.Schema(
+        {
+            vol.Required(mode): vol.All(vol.Coerce(float), vol.Range(min=0, max=35))
+            for mode in (
+                "comfort",
+                "comfort_minus_1",
+                "comfort_minus_2",
+                "eco",
+                "frost_protection",
+            )
+        }
+    ),
     "holidays": vol.Schema({vol.Required("entity"): vol.Any(None, str)}),
     "openings": vol.Schema(
         {

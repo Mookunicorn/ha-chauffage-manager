@@ -25,9 +25,9 @@ from .const import (
     CONTROL_AUTO,
     CONTROL_MANUAL,
     DEFAULT_ABSENCE,
-    DEFAULT_ABSENCE_TEMPERATURE,
     DEFAULT_OPENINGS,
     DEFAULT_TEMPERATURE,
+    DEFAULT_TEMPERATURES,
     DOMAIN,
     EVENT_UPDATED,
     PILOT_OPTIONS,
@@ -73,6 +73,7 @@ class ChauffageManager:
             "openings": {**DEFAULT_OPENINGS, **stored.get("openings", {})},
             "pauses": stored.get("pauses", {}),
             "holidays": {"entity": None, **stored.get("holidays", {})},
+            "temperatures": {**DEFAULT_TEMPERATURES, **stored.get("temperatures", {})},
             "absent": stored.get("absent", False),
             "snapshot": stored.get("snapshot"),
         }
@@ -168,6 +169,7 @@ class ChauffageManager:
             ],
             "absence": {**d["absence"], "active": d["absent"]},
             "openings": d["openings"],
+            "temperatures": d["temperatures"],
             "holidays": {**d["holidays"], "today": dt_util.now().date().isoformat() in self._holiday_dates},
         }
 
@@ -207,7 +209,11 @@ class ChauffageManager:
                 if state.state != "off":
                     await self._call("climate", "set_hvac_mode", {"entity_id": entity, "hvac_mode": "off"})
             else:
-                temp = float(temperature) if temperature is not None else DEFAULT_TEMPERATURE
+                temp = (
+                    float(temperature)
+                    if temperature is not None
+                    else float(self.data["temperatures"].get(mode, DEFAULT_TEMPERATURE))
+                )
                 if state.state == "off":
                     await self._call("climate", "set_hvac_mode", {"entity_id": entity, "hvac_mode": "heat"})
                 if state.attributes.get("temperature") != temp:
@@ -216,11 +222,6 @@ class ChauffageManager:
             _LOGGER.warning("%s : échec de la commande (%s)", heater["name"], err)
             return False
         return True
-
-    def _absence_temp(self, heater_id: str) -> float:
-        return float(
-            self.data["heaters"][heater_id].get("absence_temperature", DEFAULT_ABSENCE_TEMPERATURE)
-        )
 
     # -------------------------------------------------------------- planning
     async def _tick(self, _now=None) -> None:
@@ -237,11 +238,11 @@ class ChauffageManager:
             if not found:
                 continue
             slot, day = found
-            key = (sched_id, day, slot["time"], slot["mode"], slot.get("temperature"))
+            key = (sched_id, day, slot["time"], slot["mode"])
             if self._applied.get(target) == key:
                 continue
             results = [
-                await self._apply_heater(h, slot["mode"], slot.get("temperature"))
+                await self._apply_heater(h, slot["mode"])
                 for h in self.members(target)
             ]
             if all(results):
@@ -286,7 +287,7 @@ class ChauffageManager:
             self._applied.pop(target, None)
             if cfg["control"] == CONTROL_MANUAL and target not in self.data["pauses"]:
                 for hid in self.members(target):
-                    await self._apply_heater(hid, cfg["mode"], self._absence_temp(hid))
+                    await self._apply_heater(hid, cfg["mode"], None)
         await self._save_notify()
         if cfg["control"] == CONTROL_AUTO:
             await self._tick()
@@ -294,6 +295,12 @@ class ChauffageManager:
     async def async_upsert(self, kind: str, item_id: str | None, value: dict) -> str | None:
         if kind == "absence":
             await self.async_update_absence(**value)
+            return None
+        if kind == "temperatures":
+            self.data["temperatures"] = {**DEFAULT_TEMPERATURES, **value}
+            self._applied.clear()
+            await self._save_notify()
+            await self._tick()
             return None
         if kind == "holidays":
             self.data["holidays"] = {"entity": value.get("entity")}
@@ -443,7 +450,7 @@ class ChauffageManager:
             self._applied.pop(target, None)
             if cfg["control"] == CONTROL_MANUAL and target not in self.data["pauses"]:
                 for hid in self.members(target):
-                    await self._apply_heater(hid, cfg["mode"], self._absence_temp(hid))
+                    await self._apply_heater(hid, cfg["mode"], None)
         await self._save_notify()
         if cfg["control"] == CONTROL_AUTO:
             await self._tick()
@@ -581,7 +588,7 @@ class ChauffageManager:
         self.data["pauses"][target] = snapshot
         mode = self.data["openings"]["mode"]
         for hid in self.members(target):
-            await self._apply_heater(hid, mode, self._absence_temp(hid))
+            await self._apply_heater(hid, mode, None)
         await self._save_notify()
 
     async def _resume(self, target: str) -> None:
@@ -592,7 +599,7 @@ class ChauffageManager:
             absence = self.data["absence"]
             for hid in self.members(target):
                 if self.data["absent"]:
-                    await self._apply_heater(hid, absence["mode"], self._absence_temp(hid))
+                    await self._apply_heater(hid, absence["mode"], None)
                 elif hid in snapshot["values"]:
                     value = snapshot["values"][hid]
                     await self._apply_heater(hid, value["mode"], value["temperature"])
