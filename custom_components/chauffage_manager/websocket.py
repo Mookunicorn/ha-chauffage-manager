@@ -15,6 +15,7 @@ _SLOT = vol.Schema(
         vol.Required("time"): vol.Match(r"^([01]\d|2[0-3]):[0-5]\d$"),
         vol.Required("mode"): vol.In(MODES),
         vol.Optional("temperature"): _NUM,
+        vol.Optional("holiday"): bool,
     }
 )
 SCHEMAS = {
@@ -42,6 +43,7 @@ SCHEMAS = {
         }
     ),
     "schedule": vol.Schema({vol.Required("name"): str, vol.Required("slots"): [_SLOT]}),
+    "holidays": vol.Schema({vol.Required("entity"): vol.Any(None, str)}),
     "openings": vol.Schema(
         {
             vol.Required("delay"): vol.All(vol.Coerce(float), vol.Range(min=0, max=120)),

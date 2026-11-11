@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from datetime import date, timedelta
 from functools import partial
 from typing import Any
 
@@ -52,6 +53,8 @@ class ChauffageManager:
         self._presence_unsub = None
         self._open_unsub = None
         self._timers: dict[tuple, Any] = {}
+        self._timer_due: dict[tuple, Any] = {}
+        self._holiday_dates: set[str] = set()
         self._overridden: set[str] = set()
         self._lock = asyncio.Lock()
 
@@ -69,6 +72,7 @@ class ChauffageManager:
             "absence": absence,
             "openings": {**DEFAULT_OPENINGS, **stored.get("openings", {})},
             "pauses": stored.get("pauses", {}),
+            "holidays": {"entity": None, **stored.get("holidays", {})},
             "absent": stored.get("absent", False),
             "snapshot": stored.get("snapshot"),
         }
@@ -77,6 +81,7 @@ class ChauffageManager:
     def async_start(self) -> None:
         self._unsubs.append(async_track_time_change(self.hass, self._tick, second=0))
         self._unsubs.append(async_at_started(self.hass, self._started))
+        self._unsubs.append(async_track_time_change(self.hass, self._midnight, hour=0, minute=0, second=30))
         self._track_persons()
         self._track_openings()
 
@@ -84,7 +89,12 @@ class ChauffageManager:
     def _started(self, _hass=None) -> None:
         self.hass.async_create_task(self._startup())
 
+    async def _midnight(self, _now=None) -> None:
+        await self._refresh_holidays()
+        await self._tick()
+
     async def _startup(self) -> None:
+        await self._refresh_holidays()
         await self._evaluate_presence()
         self._evaluate_openings()
         await self._tick()
@@ -152,11 +162,13 @@ class ChauffageManager:
                     "schedule_id": self.schedule_of(t),
                     "members": self.members(t),
                     "paused": t in d["pauses"],
+                    **dict(zip(("pause_state", "pause_in"), self.pause_info(t))),
                 }
                 for t in self.target_ids()
             ],
             "absence": {**d["absence"], "active": d["absent"]},
             "openings": d["openings"],
+            "holidays": {**d["holidays"], "today": dt_util.now().date().isoformat() in self._holiday_dates},
         }
 
     # ------------------------------------------------------- lecture / écriture
@@ -221,7 +233,7 @@ class ChauffageManager:
             sched = self.data["schedules"].get(sched_id)
             if not sched:
                 continue
-            found = current_slot(sched["slots"], now.weekday(), minute)
+            found = current_slot(sched["slots"], now.date(), minute, self._holiday_dates)
             if not found:
                 continue
             slot, day = found
@@ -283,6 +295,13 @@ class ChauffageManager:
         if kind == "absence":
             await self.async_update_absence(**value)
             return None
+        if kind == "holidays":
+            self.data["holidays"] = {"entity": value.get("entity")}
+            await self._refresh_holidays()
+            self._applied.clear()
+            await self._save_notify()
+            await self._tick()
+            return None
         if kind == "openings":
             self.data["openings"] = {**DEFAULT_OPENINGS, **value}
             await self._save_notify()
@@ -323,10 +342,56 @@ class ChauffageManager:
         await self._save_notify()
         self._evaluate_openings()
 
-    async def _save_notify(self) -> None:
-        await self._store.async_save(self.data)
+    @callback
+    def _notify(self) -> None:
         self.hass.bus.async_fire(EVENT_UPDATED)
         async_dispatcher_send(self.hass, SIGNAL_UPDATE)
+
+    async def _save_notify(self) -> None:
+        await self._store.async_save(self.data)
+        self._notify()
+
+    async def _refresh_holidays(self) -> None:
+        """Lit les jours fériés dans le calendrier choisi (de J-8 à J+2)."""
+        entity = self.data["holidays"].get("entity")
+        if not entity:
+            self._holiday_dates = set()
+            return
+        today = dt_util.now().date()
+        try:
+            response = await self.hass.services.async_call(
+                "calendar",
+                "get_events",
+                {
+                    "entity_id": entity,
+                    "start_date_time": dt_util.start_of_local_day(today - timedelta(days=8)),
+                    "end_date_time": dt_util.start_of_local_day(today + timedelta(days=3)),
+                },
+                blocking=True,
+                return_response=True,
+            )
+        except HomeAssistantError as err:
+            _LOGGER.warning("Jours fériés : lecture impossible (%s)", err)
+            return
+        dates: set[str] = set()
+        for event in (response or {}).get(entity, {}).get("events", []):
+            start, end = str(event.get("start", "")), str(event.get("end", ""))
+            try:
+                first = date.fromisoformat(start[:10])
+            except ValueError:
+                continue
+            if "T" in start:
+                dates.add(first.isoformat())
+                continue
+            try:
+                last = date.fromisoformat(end[:10])
+            except ValueError:
+                last = first + timedelta(days=1)
+            day = first
+            while day < max(last, first + timedelta(days=1)):
+                dates.add(day.isoformat())
+                day += timedelta(days=1)
+        self._holiday_dates = dates
 
     # ---------------------------------------------------------------- absence
     def _track_persons(self) -> None:
@@ -436,8 +501,31 @@ class ChauffageManager:
 
     def _cancel_timer(self, key: tuple) -> None:
         unsub = self._timers.pop(key, None)
+        self._timer_due.pop(key, None)
         if unsub:
             unsub()
+            self._notify()
+
+    def _start_timer(self, target: str, kind: str, delay: float) -> None:
+        self._timers[(target, kind)] = async_call_later(
+            self.hass, delay, partial(self._timer_fired, target, kind)
+        )
+        self._timer_due[(target, kind)] = dt_util.utcnow() + timedelta(seconds=delay)
+        self._notify()
+
+    def pause_info(self, target: str) -> tuple[str | None, int | None]:
+        """État de pause : (None | pausing | paused | resuming, secondes restantes)."""
+        def left(kind: str) -> int | None:
+            due = self._timer_due.get((target, kind))
+            return max(0, int((due - dt_util.utcnow()).total_seconds())) if due else None
+
+        if target in self.data["pauses"]:
+            if (target, "resume") in self._timers:
+                return "resuming", left("resume")
+            return "paused", None
+        if (target, "pause") in self._timers:
+            return "pausing", left("pause")
+        return None, None
 
     @callback
     def _evaluate_openings(self) -> None:
@@ -459,9 +547,7 @@ class ChauffageManager:
             if delay <= 0:
                 self.hass.async_create_task(self._pause(target))
             else:
-                self._timers[(target, "pause")] = async_call_later(
-                    self.hass, delay, partial(self._timer_fired, target, "pause")
-                )
+                self._start_timer(target, "pause", delay)
         else:
             self._cancel_timer((target, "pause"))
             self._overridden.discard(target)
@@ -471,13 +557,13 @@ class ChauffageManager:
             if delay <= 0:
                 self.hass.async_create_task(self._resume(target))
             else:
-                self._timers[(target, "resume")] = async_call_later(
-                    self.hass, delay, partial(self._timer_fired, target, "resume")
-                )
+                self._start_timer(target, "resume", delay)
 
     @callback
     def _timer_fired(self, target: str, kind: str, _now=None) -> None:
         self._timers.pop((target, kind), None)
+        self._timer_due.pop((target, kind), None)
+        self._notify()
         is_open = self._is_open(target)
         if kind == "pause" and is_open:
             self.hass.async_create_task(self._pause(target))
